@@ -16,19 +16,25 @@ LABEL org.opencontainers.image.licenses=BSD3
 
 # Expose git branch, tag and URL variables as arguments
 ARG GIT_BRANCH="openssl"
-ENV GIT_BRANCH=${GIT_BRANCH}
 ARG GIT_TAG=""
-ENV GIT_TAG=${GIT_TAG}
 ARG REPO_URL="https://github.com/PurpleI2P/i2pd.git"
-ENV REPO_URL=${REPO_URL}
 
 ARG UID="1001"
-ENV UID="${UID}"
 ARG GID="1001"
-ENV GID="${GID}"
-ENV I2PD_HOME="/home/i2pd"
+
+ENV GIT_BRANCH=${GIT_BRANCH} \
+    GIT_TAG=${GIT_TAG} \
+    REPO_URL=${REPO_URL} \
+    UID="${UID}" \
+    GID="${GID}" \
+    I2PD_HOME="/home/i2pd"
+
 ENV DATA_DIR="${I2PD_HOME}/data"
 ENV DEFAULT_ARGS=" --datadir=$DATA_DIR"
+
+# 1. Copy preconfigured config file and entrypoint.
+COPY i2pd-docker.conf "$DATA_DIR/i2pd.conf"
+COPY entrypoint.sh /entrypoint.sh
 
 RUN mkdir -p "$I2PD_HOME" "$DATA_DIR" \
     && { if [ "$UID" -ne "0" ]; then \
@@ -44,7 +50,7 @@ RUN mkdir -p "$I2PD_HOME" "$DATA_DIR" \
          fi; \
        }
 
-# 1. Building binary
+# 2. Building binary
 #   Each RUN is a layer, adding the dependencies and building i2pd in one layer takes around 8-900Mb, so to keep the
 #   image under 20mb we need to remove all the build dependencies in the same "RUN" / layer.
 #
@@ -64,21 +70,17 @@ RUN apk update \
     && mv i2pd /usr/local/bin \
     && cd /usr/local/bin \
     && strip i2pd \
-    && rm -fr /tmp/build && apk --no-cache --purge del build-dependendencies build-base fortify-headers boost-dev zlib-dev openssl-dev \
-    miniupnpc-dev boost-python3 python3 gdbm boost-unit_test_framework linux-headers boost-prg_exec_monitor \
-    boost-serialization boost-wave boost-wserialization boost-math boost-graph boost-regex git pcre2 \
-    libtool g++ gcc
+    && rm -fr /tmp/build \
+    && apk --no-cache --purge del build-dependendencies build-base fortify-headers boost-dev zlib-dev openssl-dev \
+                                  miniupnpc-dev boost-python3 python3 gdbm boost-unit_test_framework linux-headers boost-prg_exec_monitor \
+                                  boost-serialization boost-wave boost-wserialization boost-math boost-graph boost-regex git pcre2 \
+                                  libtool g++ gcc \
+    && `# 3. Adding required libraries to run i2pd to ensure it will run.` \
+    && apk --no-cache add bash boost-filesystem boost-system boost-program_options boost-date_time boost-thread boost-iostreams openssl miniupnpc musl-utils libstdc++ \
+    && { if [ "$UID" -ne "0" ]; then chown i2pd:i2pd "$DATA_DIR/i2pd.conf"; else chown $UID:$GID "$DATA_DIR/i2pd.conf"; fi; } \
+    && chmod a+x /entrypoint.sh \
+    && echo "export DATA_DIR=${DATA_DIR}" >> /etc/profile
 
-# 2. Adding required libraries to run i2pd to ensure it will run.
-RUN apk --no-cache add boost-filesystem boost-system boost-program_options boost-date_time boost-thread boost-iostreams openssl miniupnpc musl-utils libstdc++
-
-# 3. Copy preconfigured config file and entrypoint
-COPY i2pd-docker.conf "$DATA_DIR/i2pd.conf"
-RUN [ "$UID" -ne "0" ] && chown i2pd:i2pd "$DATA_DIR/i2pd.conf" || chown $UID:$GID "$DATA_DIR/i2pd.conf"
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod a+x /entrypoint.sh
-
-RUN echo "export DATA_DIR=${DATA_DIR}" >> /etc/profile
 VOLUME "$DATA_DIR"
 EXPOSE 7070 4444 4447 7656 2827 7654 7650
 USER i2pd
